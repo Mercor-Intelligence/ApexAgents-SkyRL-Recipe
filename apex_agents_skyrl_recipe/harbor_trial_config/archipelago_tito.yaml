@@ -1,0 +1,76 @@
+# Archipelago TITO (Token-In, Token-Out) Harbor Configuration for SkyRL.
+#
+# SkyRL injects at runtime:
+#   - task.path (from HarborTaskDataset)
+#   - agent.model_name (text-completion-openai/{served_model_name})
+#   - agent.kwargs.api_base (from SkyRL's HTTP endpoint)
+#   - agent.kwargs.session_id (generated per-trial)
+#   - environment.kwargs.registry_image (from archipelago.json ecr_image)
+
+# We set trials_dir in the launch script
+timeout_multiplier: 1.0
+
+agent:
+  # Custom agent living in this recipe package (OSS harbor import_path mechanism)
+  import_path: apex_agents_skyrl_recipe.agents.archipelago:ArchipelagoAgent
+  override_timeout_sec: 3500
+  override_setup_timeout_sec: 1200
+
+  kwargs:
+    max_steps: 100
+    tool_call_timeout: 600
+    store_all_messages: true
+    store_reasoning_in_messages: true
+
+    # Inject per-verifier hints into instruction
+    use_hints: false
+
+    # TITO configuration
+    use_tito: true
+    # We set tito_tokenizer_name in the launch script to make sure it matches trainer.policy.model.path
+    tito_tool_call_parser: glm47
+    tito_reasoning_parser: glm45
+
+    # LLM retry configuration — disable retries for local vLLM
+    max_timeout_retries: 0
+    max_rate_limit_retries: 0
+    max_transient_retries: 0
+
+    # We set model_info.max_input_tokens and model_info.max_output_tokens in the launch script to
+    # make sure it matches generator.inference_engine.engine_init_kwargs.max_model_len
+    # LiteLLM kwargs
+    llm_kwargs:
+      timeout: 1200
+      # We set temperature in the launch script to make sure it matches trainer.algorithm.temperature
+      top_p: 1.0
+      top_k: -1
+      min_p: 0.0
+      logprobs: 1
+
+    # Tool result truncation
+    tool_result_max_chars: 42000
+
+environment:
+  type: modal
+  # Recipe-owned subclass: per-trial ECR registry_image + encrypted-port tunnels.
+  # import_path takes precedence over `type` in OSS harbor's factory.
+  import_path: apex_agents_skyrl_recipe.ecr_modal_env:EcrModalEnvironment
+  delete: true
+  override_cpus: 2
+  override_memory_mb: 4096
+  suppress_override_warnings: true
+
+  kwargs:
+    sandbox_timeout_secs: 6000
+    ecr_aws_region: us-east-1
+    # Modal secret that federates (via OIDC) to an ECR-read IAM role in the AWS
+    # account hosting the world images. It MUST match the registry account of
+    # each task's archipelago.json ecr_image, or every sandbox fails "Image build failed".
+    ecr_modal_secret_name: aws-ecr-oidc
+    modal_app_name: __harbor_rl_run__
+    encrypted_ports: [8000]
+
+verifier:
+  disable: false
+
+download_agent_logs: false
